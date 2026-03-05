@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.refresh = exports.login = exports.signup = void 0;
+exports.logout = exports.refresh = exports.login = exports.signup = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const prisma_1 = __importDefault(require("../config/prisma"));
@@ -46,10 +46,15 @@ const signup = async (req, res) => {
                 expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
             }
         });
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: true, // change to true in production
+            sameSite: "none",
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
         return res.json({
             user,
-            accessToken,
-            refreshToken
+            accessToken
         });
     }
     catch (error) {
@@ -106,9 +111,14 @@ const login = async (req, res) => {
                 expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
             }
         });
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "none",
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
         return res.json({
-            accessToken,
-            refreshToken
+            accessToken
         });
     }
     catch (error) {
@@ -123,12 +133,17 @@ REFRESH ACCESS TOKEN
 */
 const refresh = async (req, res) => {
     try {
-        const validatedData = auth_validator_1.refreshTokenSchema.parse(req.body);
-        const decoded = jsonwebtoken_1.default.verify(validatedData.refreshToken, process.env.REFRESH_TOKEN_SECRET);
+        const refreshToken = req.cookies.refreshToken;
+        if (!refreshToken) {
+            return res.status(401).json({
+                message: "Refresh token missing"
+            });
+        }
+        const decoded = jsonwebtoken_1.default.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
         const storedToken = await prisma_1.default.refreshToken.findUnique({
             where: { userId: decoded.userId }
         });
-        if (!storedToken || storedToken.token !== validatedData.refreshToken) {
+        if (!storedToken || storedToken.token !== refreshToken) {
             return res.status(401).json({
                 message: "Invalid refresh token"
             });
@@ -145,3 +160,32 @@ const refresh = async (req, res) => {
     }
 };
 exports.refresh = refresh;
+/*
+LOGOUT
+*/
+const logout = async (req, res) => {
+    try {
+        const refreshToken = req.cookies.refreshToken;
+        if (refreshToken) {
+            const decoded = jsonwebtoken_1.default.decode(refreshToken);
+            if (decoded?.userId) {
+                await prisma_1.default.refreshToken.deleteMany({
+                    where: { userId: decoded.userId }
+                });
+            }
+        }
+        res.clearCookie("refreshToken", {
+            httpOnly: true,
+            sameSite: "none"
+        });
+        return res.json({
+            message: "Logged out successfully"
+        });
+    }
+    catch (error) {
+        return res.status(500).json({
+            message: "Logout failed"
+        });
+    }
+};
+exports.logout = logout;
